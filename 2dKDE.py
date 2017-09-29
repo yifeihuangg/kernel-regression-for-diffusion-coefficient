@@ -5,6 +5,7 @@ import kernel_regression as kr
 import scipy.linalg as spl
 import numbers
 from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.patches import Rectangle
 
 
 def get_U(coord):
@@ -68,8 +69,8 @@ def get_D(coord):
     D = np.zeros([len(coord),len(coord)])
     xsq = x*x
     ysq = y*y
-    D[0] = [np.sin(x)+25*xsq+2, 0]
-    D[1] = [0, 1]
+    D[0] = [0.5*np.cos(x+y)+2, 0]
+    D[1] = [0, 0.25*(xsq+ysq)+1]
     return D
 
 
@@ -90,8 +91,8 @@ def get_dD(coord):
     x = coord[0]
     y = coord[1]
     dD = np.zeros([len(coord)])
-    dD[0] = 0
-    dD[1] = 0
+    dD[0] = -0.5*np.sin(x+y)
+    dD[1] = 0.5*y
     return dD
 
 def brownian_dynamics(nsteps,x0,force_method,get_divD,get_D,dt=0.001,kT=1.0):
@@ -137,6 +138,8 @@ def brownian_dynamics(nsteps,x0,force_method,get_divD,get_D,dt=0.001,kT=1.0):
         cfg += dt * force + sig * rando + divD * dt
         traj.append(np.copy(cfg))
     return np.array(traj)
+
+
 def get_D_KDE(trajs, pos, subsampling=1, dt=0.001):
     """
     Estimates the position-dependent diffusion constant using KDE method.
@@ -150,8 +153,7 @@ def get_D_KDE(trajs, pos, subsampling=1, dt=0.001):
         The subsampling used when calculate trajectories. Default is 1.
     dt: float, optional
          Timestep for the Bronwnian_dynamics.  Default is 0.001, which is a decent choice for a harmonic with force constant 1.
-    use_drift: optional, True/False
-         If True, use drift term in the approximation, if False, not use.
+
     Returns
     -------
     D : array
@@ -159,39 +161,26 @@ def get_D_KDE(trajs, pos, subsampling=1, dt=0.001):
     """
     kernel = kr.KernelRegression(kernel="rbf", gamma=np.logspace(-2, 2, 10))
     dim = np.size(trajs[0][0])
-    #if it is 1d dimension, then put all training datas in 1d array
-    if dim == 1 :
-        print('Dimension is 1')
-        y_trajs = np.zeros([len(trajs),len(trajs[0])-1])
-        x_trajs = np.zeros_like(y_trajs)
-        # Store all the y in one dataset and use all the x's and corresponding y's to make model
-        for n in xrange(len(trajs)):
-            for i in xrange(len(trajs[0])-1):
-                y_trajs[n][i] = ((trajs[n][i+1] - trajs[n][i])**2)
-                x_trajs[n][i] = trajs[n][i]
-        D = np.zeros(len(pos))
-        x = x_trajs.flatten()
-        y = y_trajs.flatten()
-        x.resize((len(x),1)) # Kernel.fit only takes in input matrix with shape(n,1), so change it into (n,1)
-        model = kernel.fit(x,y)
-        pos.resize((len(pos),1))# model.predict only take (x,1) size input
-        D = (model.predict(pos))/(dt*2*subsampling)
-    else:
-        print('Dimension is %d' %(dim))
-        D = np.zeros([dim,dim,len(pos)])
-        for i in xrange(dim):
-            for j in xrange(dim):
-                y_trajs = np.zeros([len(trajs), len(trajs[0])-1])
-                x_trajs = np.zeros([len(trajs), len(trajs[0])-1, np.size(trajs[0][0])])
-                for m in xrange(len(trajs)):
-                    for n in xrange(len(trajs[0])-1):
-                        y_trajs[m][n] = (trajs[m][n+1][i]-trajs[m][n][i])*(trajs[m][n+1][j]-trajs[m][n][j])
-                        x_trajs[m][n] = trajs[m][n]
+    print('Dimension is %d' %(dim))
+    D = np.zeros([dim,dim,len(pos)])
 
-                x = x_trajs.reshape(len(trajs)*(len(trajs[0])-1),dim)
-                y = y_trajs.flatten()
-                model = kernel.fit(x,y)
-                D[i][j] = (model.predict(pos))/(dt*2*subsampling)
+    #filling training data x
+    x_trajs = np.zeros([len(trajs), len(trajs[0])-1, np.size(trajs[0][0])])
+    for m in xrange(len(trajs)):
+        for n in xrange(len(trajs[0])-1):
+            x_trajs[m][n] = trajs[m][n]
+    x = x_trajs.reshape(len(trajs)*(len(trajs[0])-1),dim)
+    #filling training data y
+    for i in xrange(dim):
+        for j in xrange(dim):
+            y_trajs = np.zeros([len(trajs), len(trajs[0])-1])
+            for m in xrange(len(trajs)):
+                for n in xrange(len(trajs[0])-1):
+                    y_trajs[m][n] = (trajs[m][n+1][i]-trajs[m][n][i])*(trajs[m][n+1][j]-trajs[m][n][j])
+            y = y_trajs.flatten()
+
+            model = kernel.fit(x,y)
+            D[i][j] = (model.predict(pos))/(dt*2*subsampling)
 
     return D
 
@@ -200,20 +189,14 @@ def main():
     trajs = []
     initial = np.linspace(-2.,2.,21)
     kT = 1.0
-#    dt = 0.00001
-##    nsteps = 500
-#    nsteps = 10000
-#    subsampling = 1000
     dt = 0.001
     nsteps = 20
-#    nsteps = 100
     subsampling = 1
     for xinitial in initial:
         for yinitial in initial:
             for times in xrange(1):
                 x0 =  np.array([xinitial, yinitial])
                 traj = brownian_dynamics(nsteps,x0,get_F,get_dD,get_D,dt=dt,kT=kT)
-                # time consuming -> from begining to end skip every 10 points
                 # traj = traj[::subsampling]
                 trajs.append(traj)
 
@@ -224,51 +207,224 @@ def main():
         for n in xrange(len(hist_edges)-1):
             pos.append ([(hist_edges[m]+hist_edges[m+1])/2,(hist_edges[n]+hist_edges[n+1])/2])
     pos = np.array(pos)
-    D_wo_drift= get_D_KDE(trajs,pos,subsampling,dt)
-#    D_w_drift= get_D_KDE(trajs,pos,subsampling,dt)
-    realD = np.array([get_D(pos_i) for pos_i in pos])
-    print("DONE!")
-    #Plot estimation and true D values
-    plt.figure()
-#    plt.plot(pos, D_w_drift,c = 'y', label = 'kernel w drift')
-    print (np.shape(pos))
-    print(np.shape(D_wo_drift))
 
-#    scatter plot
-    plt.subplot(1,2,1)
+    D_KDE = get_D_KDE(trajs,pos,subsampling,dt)
+    realD = np.array([get_D(pos_i) for pos_i in pos])
+
+    print("DONE!")
+
+
+#Plot estimation and true D values
+
+
+
+#plot D[0,0]
+#   scatter plot
+    plt.figure()
+    plt.subplot(2,2,1)
     vmax=np.amax(realD[:,0,0])+0.25*np.amax(realD[:,0,0])
     vmin=np.amin(realD[:,0,0])-0.25*np.amax(realD[:,0,0])
-    SC_1 = plt.scatter(pos[:,0], pos[:,1], c=D_wo_drift[0,0,:],linewidth='0',vmax=vmax,vmin=vmin)
+    SC_1 = plt.scatter(pos[:,0], pos[:,1], c=D_KDE[0,0,:],linewidth='0',vmax=vmax,vmin=vmin)
     plt.colorbar(SC_1)
     plt.xlabel('x positions')
     plt.ylabel('y position')
     plt.title('Kernel regression')
-    plt.subplot(1,2,2)
+    plt.subplot(2,2,2)
     SC_2 = plt.scatter(pos[:,0],pos[:,1], c=realD[:,0,0], linewidth='0',vmax=vmax,vmin=vmin)
     plt.colorbar(SC_2)
     plt.xlabel('x positions')
     plt.ylabel('y position')
     plt.title('Real D')
     plt.legend()
+    plt.tight_layout()
     plt.show()
-    plt.savefig('KDE_2D')
+    #plt.savefig('KDE_2D')
     plt.close()
 
 #   3D plt
+    X = pos[:,0]
+    Y = pos[:,1]
+    Z = D_KDE[0,0,:]
+    Zreal = realD[:,0,0]
+
     fig = plt.figure()
-    ax = fig.gca(projection='3d')
+    ax = fig.add_subplot(2,2,1, projection='3d')
+    SP_1 = ax.plot_trisurf(X, Y, Z, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
     ax.set_xlabel = ('x position')
     ax.set_ylabel = ('y position')
     ax.set_zlabel = ('D')
-    plt.title = ('Kernel vs. Real')
+    ax.set_title("Kernel Regression")
+    plt.colorbar(SP_1)
+
+    ax = fig.add_subplot(2, 2, 2, projection='3d')
+    SP_2 = ax.plot_trisurf(X, Y, Zreal, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+    ax.set_xlabel = ('x position')
+    ax.set_ylabel = ('y position')
+    ax.set_zlabel = ('D')
+    ax.set_title("RealD")
+    plt.colorbar(SP_2)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+    #fig.savefig('3d_scatter')
+    plt.close()
+
+
+# #plot D[0,1]
+# #   scatter plot
+#     plt.figure()
+#     plt.subplot(2,2,1)
+#     vmax=np.amax(realD[:,0,1])+0.5
+#     vmin=np.amin(realD[:,0,1])-0.5
+#     SC_1 = plt.scatter(pos[:,0], pos[:,1], c=D_KDE[0,1,:],linewidth='0',vmax=vmax,vmin=vmin)
+#     plt.colorbar(SC_1)
+#     plt.xlabel('x positions')
+#     plt.ylabel('y position')
+#     plt.title('Kernel regression')
+#     plt.subplot(2,2,2)
+#     SC_2 = plt.scatter(pos[:,0],pos[:,1], c=realD[:,0,1], linewidth='0',vmax=vmax,vmin=vmin)
+#     plt.colorbar(SC_2)
+#     plt.xlabel('x positions')
+#     plt.ylabel('y position')
+#     plt.title('Real D')
+#     plt.legend()
+#     plt.tight_layout()
+#     plt.show()
+#     #plt.savefig('KDE_2D')
+#     plt.close()
+#
+# #   3D plt
+#     X = pos[:,0]
+#     Y = pos[:,1]
+#     Z = D_KDE[0,1,:]
+#     Zreal = realD[:,0,1]
+#
+#     fig = plt.figure()
+#     ax = fig.add_subplot(2,2,1, projection='3d')
+#     SP_1 = ax.plot_trisurf(X, Y, Z, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+#     ax.set_xlabel = ('x position')
+#     ax.set_ylabel = ('y position')
+#     ax.set_zlabel = ('D')
+#     ax.set_title("Kernel Regression")
+#     plt.colorbar(SP_1)
+#
+#     ax = fig.add_subplot(2, 2, 2, projection='3d')
+#     SP_2 = ax.plot_trisurf(X, Y, Zreal, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+#     ax.set_xlabel = ('x position')
+#     ax.set_ylabel = ('y position')
+#     ax.set_zlabel = ('D')
+#     ax.set_title("RealD")
+#     plt.colorbar(SP_2)
+#     ax.legend()
+#     plt.tight_layout()
+#     plt.show()
+#     #fig.savefig('3d_scatter')
+#     plt.close()
+#
+#
+#
+# # plot D[1,0]
+# #   scatter plot
+#     plt.figure()
+#     plt.subplot(2,2,1)
+#     vmax=np.amax(realD[:,1,0])+0.5
+#     vmin=np.amin(realD[:,1,0])-0.5
+#     SC_1 = plt.scatter(pos[:,0], pos[:,1], c=D_KDE[1,0,:],linewidth='0',vmax=vmax,vmin=vmin)
+#     plt.colorbar(SC_1)
+#     plt.xlabel('x positions')
+#     plt.ylabel('y position')
+#     plt.title('Kernel regression')
+#     plt.subplot(2,2,2)
+#     SC_2 = plt.scatter(pos[:,0],pos[:,1], c=realD[:,1,0], linewidth='0',vmax=vmax,vmin=vmin)
+#     plt.colorbar(SC_2)
+#     plt.xlabel('x positions')
+#     plt.ylabel('y position')
+#     plt.title('Real D')
+#     plt.legend()
+#     plt.tight_layout()
+#     plt.show()
+#     #plt.savefig('KDE_2D')
+#     plt.close()
+#
+# #   3D plt
+#     X = pos[:,0]
+#     Y = pos[:,1]
+#     Z = D_KDE[1,0,:]
+#     Zreal = realD[:,1,0]
+#
+#     fig = plt.figure()
+#     ax = fig.add_subplot(2,2,1, projection='3d')
+#     SP_1 = ax.plot_trisurf(X, Y, Z, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+#     ax.set_xlabel = ('x position')
+#     ax.set_ylabel = ('y position')
+#     ax.set_zlabel = ('D')
+#     ax.set_title("Kernel Regression")
+#     plt.colorbar(SP_1)
+#
+#     ax = fig.add_subplot(2, 2, 2, projection='3d')
+#     SP_2 = ax.plot_trisurf(X, Y, Zreal, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+#     ax.set_xlabel = ('x position')
+#     ax.set_ylabel = ('y position')
+#     ax.set_zlabel = ('D')
+#     ax.set_title("RealD")
+#     plt.colorbar(SP_2)
+#     ax.legend()
+#     plt.tight_layout()
+#     plt.show()
+#     #fig.savefig('3d_scatter')
+#     plt.close()
+
+
+# plot D[1,1]
+#   scatter plot
+    plt.figure()
+    plt.subplot(2,2,1)
+    vmax=np.amax(realD[:,1,1])+0.25*np.amax(realD[:,1,1])
+    vmin=np.amin(realD[:,1,1])-0.25*np.amax(realD[:,1,1])
+    SC_1 = plt.scatter(pos[:,0], pos[:,1], c=D_KDE[1,1,:],linewidth='0',vmax=vmax,vmin=vmin)
+    plt.colorbar(SC_1)
+    plt.xlabel('x positions')
+    plt.ylabel('y position')
+    plt.title('Kernel regression')
+    plt.subplot(2,2,2)
+    SC_2 = plt.scatter(pos[:,0],pos[:,1], c=realD[:,1,1], linewidth='0',vmax=vmax,vmin=vmin)
+    plt.colorbar(SC_2)
+    plt.xlabel('x positions')
+    plt.ylabel('y position')
+    plt.title('Real D')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+    #plt.savefig('KDE_2D')
+    plt.close()
+
+#   3D plt
     X = pos[:,0]
     Y = pos[:,1]
-    Z = D_wo_drift[0,0,:]
-    Zreal = realD[:,0,0]
-    ax.scatter(X, Y, Z,c = 'y',marker = 'o',label='kernel',linewidth = '0')
-    ax.scatter(X,Y,Zreal, c = 'b', marker = '^', label='real', linewidth = '0')
+    Z = D_KDE[1,1,:]
+    Zreal = realD[:,1,1]
+
+    fig = plt.figure()
+    ax = fig.add_subplot(2,2,1, projection='3d')
+    SP_1 = ax.plot_trisurf(X, Y, Z, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+    ax.set_xlabel = ('x position')
+    ax.set_ylabel = ('y position')
+    ax.set_zlabel = ('D')
+    ax.set_title("Kernel Regression")
+    plt.colorbar(SP_1)
+
+    ax = fig.add_subplot(2, 2, 2, projection='3d')
+    SP_2 = ax.plot_trisurf(X, Y, Zreal, cmap=cm.coolwarm, linewidth = '0', vmax = vmax, vmin = vmin,antialiased=False)
+    ax.set_xlabel = ('x position')
+    ax.set_ylabel = ('y position')
+    ax.set_zlabel = ('D')
+    ax.set_title("RealD")
+    plt.colorbar(SP_2)
+
     ax.legend()
-    fig.savefig('3d_scatter')
+    plt.tight_layout()
+    plt.show()
+    #fig.savefig('3d_scatter')
     plt.close()
 
     return
